@@ -21,12 +21,16 @@ export class AppService {
     return number;
   }
 
-  private async getXml(date: Date) {
-    let day = await this.addZero(date.getDate());
-    let month = await this.addZero(date.getMonth() + 1);
-    const year = date.getFullYear();
+  private async getXml(date: string) {
+    const splitDate = date.split('-');
+
+    let day = splitDate[2];
+    let month = splitDate[1];
+    const year = splitDate[0];
 
     const url = `https://www.tcmb.gov.tr/kurlar/${year}${month}/${day}${month}${year}.xml`;
+
+    console.log(url);
 
     const { data } = await lastValueFrom(this.httpService.get(url));
 
@@ -37,17 +41,17 @@ export class AppService {
     return currencyData;
   }
 
-  async getRates(date: Date) {
+  async getRates(date: string, to: String) {
     const currencyData = await this.getXml(date);
 
-    let data = currencyData.map((element) => {
-      return element['CurrencyName'] + ': ' + element['BanknoteSelling'];
+    let data = currencyData.find((element) => {
+      return element['@_CurrencyCode'] === to;
     });
 
-    return data;
+    return to + ': ' + data.BanknoteSelling;
   }
 
-  async currencyCalculate(from: string, to: string, amount: any, date: Date) {
+  async currencyCalculate(from: string, to: string, amount: any, date: string) {
     const currencyData = await this.getXml(date);
 
     const currency = (from?: String, to?: String) => {
@@ -55,7 +59,8 @@ export class AppService {
         if (from === 'TRY') return item['@_CurrencyCode'] === to;
         if (to === 'TRY') return item['@_CurrencyCode'] === from;
 
-        if (from && to !== 'TRY') return item['@_CurrencyCode'] === from;
+        if (from !== 'TRY' && to !== 'TRY')
+          return item['@_CurrencyCode'] === from;
 
         return item['@_CurrencyCode'] === to;
       });
@@ -74,7 +79,8 @@ export class AppService {
         return toValue.toFixed(2);
       }
 
-      if (from === 'TRY') return amount / currency(to).BanknoteSelling;
+      if (from === 'TRY')
+        return (amount / currency(to).BanknoteSelling).toFixed(2);
 
       const calculatedNumber = amount * currency(from, to).BanknoteSelling;
 

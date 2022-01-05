@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import { AppService } from './app.service';
 
 @Controller()
@@ -7,16 +7,18 @@ export class AppController {
 
   @Get()
   async getRates() {
-    const date = new Date('2021-12-27');
-    return await this.appService.getRates(date);
+    const date = '2021-12-27';
+    const to = 'USD';
+    return await this.appService.getRates(date, to);
   }
 
-  @Get(':calc')
-  async currencyCalculate() {
-    const from = 'USD';
-    const to = 'EUR';
-    const amount = 100;
-    const date = new Date('2022-01-05');
+  @Get('/calc?')
+  async currencyCalculate(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('amount') amount: number,
+    @Query('date') date: string,
+  ) {
     return this.appService.currencyCalculate(from, to, amount, date);
   }
 }
