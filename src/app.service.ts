@@ -3,6 +3,13 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { XMLParser } from 'fast-xml-parser';
 import { ICurrency } from 'interfaces/ICurrency.interface';
+import * as moment from 'moment';
+import { CurrencyModel, CurrencySchema } from 'tools/model/currency.model';
+import { Model } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+const mongoose = require('mongoose');
 
 const options = {
   ignoreAttributes: false,
@@ -12,7 +19,45 @@ const parser = new XMLParser(options);
 
 @Injectable()
 export class AppService {
-  constructor(private httpService: HttpService) {}
+  constructor(
+    private httpService: HttpService,
+    @InjectModel('Currency') private readonly mongoModel: Model<CurrencyModel>,
+  ) {}
+
+  async onModuleInit() {
+    await this.saveCurrency();
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_4PM)
+  async handleCron() {
+    await this.saveCurrency();
+  }
+
+  async saveCurrency() {
+    if ((await this.validator()) === true) return null;
+
+    const date = moment().format('YYYY-MM-DD');
+
+    const currencyData = await this.getXml(date);
+
+    let currencymodel = new CurrencyModel();
+
+    currencymodel.date = date;
+    currencymodel.currencyData = currencyData;
+
+    const createdModel = new this.mongoModel(currencymodel);
+
+    return await createdModel.save();
+  }
+
+  private validator(): Promise<Boolean> {
+    mongoose.connect('mongodb://localhost/Currency');
+    const date = moment().format('YYYY-MM-DD');
+
+    const currency = this.mongoModel.exists({ date: date });
+
+    return currency;
+  }
 
   private async addZero(number: Number | String) {
     if (number.toString().length < 2) {
@@ -21,37 +66,62 @@ export class AppService {
     return number;
   }
 
-  private async getXml(date: string) {
-    const splitDate = date.split('-');
+  private async decreaseDate(date: Date) {
+    const day = moment(date).date();
 
-    let day = splitDate[2];
-    let month = splitDate[1];
-    const year = splitDate[0];
+    if (day === 1) {
+      const dateFrom = moment(date)
+        .subtract(1, 'months')
+        .endOf('month')
+        .format('YYYY-MM-DD');
+
+      date = moment(dateFrom).toDate();
+    } else date = moment(date).subtract(1, 'days').toDate();
+
+    return date;
+  }
+
+  private async getXml(date: Date | String) {
+    date = moment(date.toString()).toDate();
+    const day = await this.addZero(moment(date).date());
+    const month = await this.addZero(moment(date).month() + 1);
+    const year = moment(date).year();
 
     const url = `https://www.tcmb.gov.tr/kurlar/${year}${month}/${day}${month}${year}.xml`;
 
-    console.log(url);
+    let currencyXml: any;
 
-    const { data } = await lastValueFrom(this.httpService.get(url));
+    try {
+      const newData = await lastValueFrom(this.httpService.get(url));
+      currencyXml = newData;
+    } catch (error) {
+      const newDate = await this.decreaseDate(date);
+      return await this.getXml(newDate);
+    }
 
-    const jsonData = parser.parse(data);
+    const jsonData = parser.parse(currencyXml.data);
 
     const currencyData = jsonData.Tarih_Date.Currency;
 
     return currencyData;
   }
 
-  async getRates(date: string, to: String) {
+  async getRates(from: string, to: string, date: Date | String) {
     const currencyData = await this.getXml(date);
-
-    let data = currencyData.find((element) => {
+    const data = currencyData.find((element) => {
       return element['@_CurrencyCode'] === to;
     });
 
-    return to + ': ' + data.BanknoteSelling;
+    data.CrossRateUSD === ''
+      ? from + ': ' + data.CrossRateOther + ' ' + to
+      : from + ': ' + data.CrossRateUSD + ' ' + to;
+
+    // if (data.CrossRateUSD === '') {
+    //   return from + ': ' + data.CrossRateOther + ' ' + to;
+    // } else return from + ': ' + data.CrossRateUSD + ' ' + to;
   }
 
-  async currencyCalculate(from: string, to: string, amount: any, date: string) {
+  async currencyCalculate(from: string, to: string, amount: any, date: Date) {
     const currencyData = await this.getXml(date);
 
     const currency = (from?: String, to?: String) => {
